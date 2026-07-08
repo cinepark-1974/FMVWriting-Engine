@@ -1,6 +1,6 @@
 """
 🎬 BLUE JEANS FMV ENGINE v1.0 — main.py
-게임형 FMV (스토리타코 모델 — 캐릭터 공략형 멀티 루트 로맨스)
+게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 STEP 0~7 파이프라인 · 집필: Opus / 구조·검증: Sonnet
 © 2026 BLUE JEANS PICTURES
 """
