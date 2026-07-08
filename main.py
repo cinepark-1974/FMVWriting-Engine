@@ -253,7 +253,20 @@ with tabs[1]:
     proj["world"] = st.text_area("세계관 원포인트 (고립·공존 공간 등)", value=proj["world"], height=70)
     st.session_state["project"] = proj
 
-    st.markdown('<div class="callout"><b>① 컨셉 브레인스토밍</b></div>', unsafe_allow_html=True)
+    st.markdown('<div class="callout"><b>① 훅 발굴</b> — 아이디어 한 조각만 있어도 시작하세요. 완성된 한 줄 훅 후보를 뽑아드립니다.</div>', unsafe_allow_html=True)
+    fragment = st.text_input("재료 한두 조각 (막연해도 됩니다)",
+        placeholder="예: 좀비 / 요가복 / 회사 상사 / 무인도 / 룸메이트")
+    if st.button("💡 한 줄 훅 후보 생성", key="btn_hook"):
+        if not fragment.strip():
+            st.error("재료를 한 조각이라도 입력하세요. (단어 하나면 충분합니다)")
+        else:
+            with st.spinner("스토리타코 훅 공식으로 후보를 뽑는 중..."):
+                st.markdown(call_claude(
+                    P.build_hook_finder_prompt(fragment, proj["target"]),
+                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
+                st.caption("💡 마음에 드는 훅을 위 '한 줄 훅' 칸에 옮겨 적으면 다음 단계로 이어집니다.")
+
+    st.markdown('<div class="callout"><b>② 컨셉 브레인스토밍</b></div>', unsafe_allow_html=True)
     keywords = st.text_area("소재 키워드",
         placeholder="예: 좀비 아포칼립스, 셸터 고립, 미녀 생존자들, 지켜야 하는 남자 주인공", height=70)
     if st.button("🔥 컨셉 후보 생성", key="btn_concept"):
@@ -261,7 +274,7 @@ with tabs[1]:
             st.markdown(call_claude(P.build_concept_prompt(proj, keywords),
                                     max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
 
-    st.markdown('<div class="callout"><b>② 공략 캐릭터 설계</b></div>', unsafe_allow_html=True)
+    st.markdown('<div class="callout"><b>③ 공략 캐릭터 설계</b></div>', unsafe_allow_html=True)
     n_char = st.slider("공략 캐릭터 수", 2, 5, 4)
     if st.button("👥 캐릭터 라인업 생성", key="btn_char"):
         with st.spinner("컨셉 비중복·난이도 차등으로 설계하는 중..."):
