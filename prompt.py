@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS FMV ENGINE v1.1.0
+# BLUE JEANS FMV ENGINE v1.2.0
 # prompt.py — System Prompt + FMV Rule Set + Prompt Builder Functions
 # © 2026 BLUE JEANS PICTURES
 #
@@ -28,13 +28,21 @@
 #                  · 트랩 안전성 검증표 · 선택 비율 감사 · 반응 비트 열
 #                - steam_check 점검 항목 6번(결제 대행사) 추가, 보수적 판정 지시
 #                - final_summary 체크리스트 11항목으로 확장
+# v1.2.0  (2026-07-28) STEP 1 빌더 JSON 출력 모드 추가 (UI 후보 선택 지원).
+#                - build_hook_finder_prompt / build_concept_prompt /
+#                  build_character_prompt 에 as_json 파라미터 추가 (기본 False)
+#                  as_json=True면 고정 스키마의 순수 JSON만 출력한다.
+#                - 기존 마크다운 출력 경로는 그대로 유지 (하위 호환)
+#                - 스키마 제약: subconcept는 SUBCONCEPTS 키와 일치,
+#                  difficulty는 DIFFICULTY_LEVELS와 일치, 각 필드는 줄바꿈 없는 한 문장
+#                - 캐릭터 name은 성을 뗀 표기로 통일 지시 (씬 집필 대사 표기와 정합)
 # ─────────────────────────────────────────────────────────────
 
 # ═══════════════════════════════════════════════════════════
 # ENGINE VERSION
 # ═══════════════════════════════════════════════════════════
 
-ENGINE_VERSION = "v1.1.0"
+ENGINE_VERSION = "v1.2.0"
 ENGINE_BUILD_DATE = "2026-07-28"
 
 # ═══════════════════════════════════════════════════════════
@@ -384,8 +392,49 @@ def _character_block(characters):
 # STEP 1. 컨셉 & 캐릭터 기획 빌더  (모델: Sonnet)
 # ═══════════════════════════════════════════════════════════
 
-def build_concept_prompt(project, keywords):
-    """소재 키워드 → 로맨스 기반 서브컨셉 + 훅 + 세계관 원포인트 제안."""
+def build_concept_prompt(project, keywords, as_json=False):
+    """소재 키워드 → 로맨스 기반 서브컨셉 + 훅 + 세계관 원포인트 제안.
+
+    as_json=True면 UI가 후보를 선택지로 렌더링할 수 있도록 순수 JSON으로 출력한다.
+    """
+    tail_json = """
+아래 JSON 스키마로만 출력하라. 설명·서론·코드펜스 없이 JSON 객체 하나만 출력한다.
+
+{
+  "candidates": [
+    {
+      "label": "A",
+      "subconcept": "순정 로맨스",
+      "hook": "한 줄 훅 (완성형 한 문장)",
+      "world": "세계관 원포인트 (한 문장)",
+      "strength": "예상 강점 (한 문장)",
+      "risk": "예상 리스크 (한 문장)"
+    }
+  ]
+}
+
+규칙:
+- candidates는 정확히 3개. label은 "A","B","C".
+- subconcept는 반드시 다음 중 하나의 문자열: "순정 로맨스", "로맨스릴러", "사회이슈 결합", "IP 활용"
+  (A는 "순정 로맨스", B는 "로맨스릴러", C는 "사회이슈 결합")
+- hook과 world는 각각 한 문장으로 완결한다. 줄바꿈을 넣지 않는다.
+  hook은 그대로 기획 필드에 입력될 값이므로 접두사('훅:' 등)를 붙이지 않는다.
+"""
+    tail_md = """
+부연 설명 없이 아래 형식으로만 출력하라.
+
+## 컨셉 후보 A — 순정 로맨스
+- 훅:
+- 세계관 원포인트:
+- 강점:
+- 리스크:
+
+## 컨셉 후보 B — 로맨스릴러
+(동일 형식)
+
+## 컨셉 후보 C — 사회이슈 결합
+(동일 형식)
+"""
     return f"""{SYSTEM_PROMPT}
 
 {FMV_HARD_RULES}
@@ -408,26 +457,50 @@ def build_concept_prompt(project, keywords):
 3. 글로벌 유저가 공감할 수 있는 소재인지 스스로 점검한다.
 4. 스팀 정책 위반 소지(미성년/범죄유도/강제)가 있으면 그 자리에서 대안을 제시한다.
 5. 각 후보의 예상 강점과 리스크를 한 줄씩 덧붙인다.
-
-부연 설명 없이 아래 형식으로만 출력하라.
-
-## 컨셉 후보 A — 순정 로맨스
-- 훅:
-- 세계관 원포인트:
-- 강점:
-- 리스크:
-
-## 컨셉 후보 B — 로맨스릴러
-(동일 형식)
-
-## 컨셉 후보 C — 사회이슈 결합
-(동일 형식)
-"""
+{tail_json if as_json else tail_md}"""
 
 
-def build_character_prompt(project, n_characters, existing_characters=None):
-    """공략 캐릭터 설계 — 컨셉 비중복 + 난이도 차등 + 클리셰 태그."""
+def build_character_prompt(project, n_characters, existing_characters=None, as_json=False):
+    """공략 캐릭터 설계 — 컨셉 비중복 + 난이도 차등 + 클리셰 태그.
+
+    as_json=True면 UI가 캐릭터를 바로 세션에 저장할 수 있도록 순수 JSON으로 출력한다.
+    """
     existing = _character_block(existing_characters) if existing_characters else "(없음)"
+    tail_json = f"""
+아래 JSON 스키마로만 출력하라. 설명·서론·코드펜스 없이 JSON 객체 하나만 출력한다.
+
+{{
+  "characters": [
+    {{
+      "name": "이름",
+      "archetype": "아키타입(클리셰)",
+      "concept": "컨셉 한 줄",
+      "difficulty": "쉬움",
+      "charm": "매력 포인트",
+      "conflict": "관계 갈등 (주인공과의 긴장 요소)",
+      "first_impression": "첫 등장 씬 인상"
+    }}
+  ]
+}}
+
+규칙:
+- characters는 정확히 {n_characters}개.
+- difficulty는 반드시 다음 중 하나의 문자열: "쉬움", "보통", "어려움"
+- 각 필드는 한 문장으로 완결하고 줄바꿈을 넣지 않는다.
+- name은 성을 뗀 이름 표기로 통일한다. (씬 집필 단계의 대사 표기와 일치시켜야 한다)
+"""
+    tail_md = """
+부연 설명 없이 아래 형식으로만 캐릭터 수만큼 출력하라.
+
+### 캐릭터 1
+- 이름:
+- 아키타입(클리셰):
+- 컨셉 한 줄:
+- 공략 난이도:
+- 매력 포인트:
+- 관계 갈등(주인공과의 긴장 요소):
+- 첫 등장 씬 인상:
+"""
     return f"""{SYSTEM_PROMPT}
 
 {FMV_HARD_RULES}
@@ -449,19 +522,9 @@ def build_character_prompt(project, n_characters, existing_characters=None):
    - 유저를 이미 좋아하는 순한 캐릭터 → 쉬움
 3. 각 캐릭터는 '첫 씬에서 즉시 파악되는' 선명한 컨셉을 가진다.
 4. 스팀 정책 준수: 미성년 설정 금지, 성적 대상화 금지, 캐릭터 관계에 강제·범죄 뉘앙스 금지.
+   결제 대행사 기준(하드 룰 12)에 걸릴 관계 구도는 애초에 만들지 않는다.
 5. 글로벌 유저가 매력을 느낄 보편적 매력 포인트를 부여한다.
-
-부연 설명 없이 아래 형식으로만 캐릭터 수만큼 출력하라.
-
-### 캐릭터 1
-- 이름:
-- 아키타입(클리셰):
-- 컨셉 한 줄:
-- 공략 난이도:
-- 매력 포인트:
-- 관계 갈등(주인공과의 긴장 요소):
-- 첫 등장 씬 인상:
-"""
+{tail_json if as_json else tail_md}"""
 
 
 # ═══════════════════════════════════════════════════════════
@@ -994,8 +1057,54 @@ def build_adaptation_prompt(manuscript, target="여성향(오토메)"):
 # 아이디어 한 조각만 있는 상태에서 시작하도록 돕는 입구.
 # ═══════════════════════════════════════════════════════════
 
-def build_hook_finder_prompt(fragment, target="남성향"):
-    """막연한 재료 한두 개 → FMV 공식에 맞춘 한 줄 훅 후보 5~6개 생성."""
+def build_hook_finder_prompt(fragment, target="남성향", as_json=False):
+    """막연한 재료 한두 개 → FMV 공식에 맞춘 한 줄 훅 후보 5~6개 생성.
+
+    as_json=True면 UI가 후보를 선택지로 렌더링할 수 있도록 순수 JSON으로 출력한다.
+    """
+    tail_json = """
+아래 JSON 스키마로만 출력하라. 설명·서론·코드펜스 없이 JSON 객체 하나만 출력한다.
+
+{
+  "candidates": [
+    {
+      "hook": "한 줄 훅 (완성형 한 문장)",
+      "isolation": "고립 공간",
+      "cast": "공략 대상 구성",
+      "pressure": "관계 압력 (왜 갇히나)",
+      "subconcept": "순정 로맨스"
+    }
+  ],
+  "recommend": {
+    "commercial": "가장 상업성 높은 후보의 hook 원문",
+    "distinctive": "가장 차별화된 후보의 hook 원문"
+  }
+}
+
+규칙:
+- candidates는 5개 또는 6개.
+- subconcept는 반드시 다음 중 하나의 문자열: "순정 로맨스", "로맨스릴러", "사회이슈 결합", "IP 활용"
+- 각 필드는 한 문장으로 완결하고 줄바꿈을 넣지 않는다.
+- hook은 그대로 기획 필드에 입력될 값이므로 접두사('훅:' 등)나 따옴표를 붙이지 않는다.
+- recommend의 두 값은 candidates 안에 있는 hook 문자열과 정확히 일치해야 한다.
+"""
+    tail_md = """
+부연 설명 없이 아래 형식으로만 출력하라.
+
+## 훅 후보
+### 1.
+- 한 줄 훅:
+- 고립 공간:
+- 공략 대상 구성:
+- 관계 압력(왜 갇히나):
+- 어울리는 서브컨셉:
+
+(2~6번 동일 형식)
+
+## 추천
+- 가장 상업성 높은 후보:
+- 가장 차별화된 후보:
+"""
     return f"""{SYSTEM_PROMPT}
 
 {FMV_HARD_RULES}
@@ -1029,20 +1138,4 @@ def build_hook_finder_prompt(fragment, target="남성향"):
 4. 서로 다른 방향으로 발산시킨다. (안전한 것부터 실험적인 것까지 섞는다)
 5. 스팀 정책·톤 LOCKED(관능적 로맨스)를 준수한다.
 6. 글로벌 유저가 즉시 이해할 보편적 훅으로 만든다.
-
-부연 설명 없이 아래 형식으로만 출력하라.
-
-## 훅 후보
-### 1.
-- 한 줄 훅:
-- 고립 공간:
-- 공략 대상 구성:
-- 관계 압력(왜 갇히나):
-- 어울리는 서브컨셉:
-
-(2~6번 동일 형식)
-
-## 추천
-- 가장 상업성 높은 후보:
-- 가장 차별화된 후보:
-"""
+{tail_json if as_json else tail_md}"""

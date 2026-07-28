@@ -1,5 +1,5 @@
 """
-🎬 BLUE JEANS FMV ENGINE v1.1.0 — main.py
+🎬 BLUE JEANS FMV ENGINE v1.2.0 — main.py
 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 STEP 0~7 파이프라인 · 집필: Opus / 구조·검증: Sonnet
 © 2026 BLUE JEANS PICTURES
@@ -16,6 +16,15 @@ v1.1.0  (2026-07-28) 흥행 필수 요소 반영 — 결정론적 검증 도구 
         - STEP 5: 결제 대행사 기준 안내 (2025-07 스팀 조항)
         - 세션 키 신설: playtime / choice_audit
           (_init_state defaults + backup_payload 동시 반영, 복원 루프는 자동 커버)
+v1.2.0  (2026-07-28) STEP 1 후보 선택 방식 전환 — 복사·붙여넣기 제거.
+        - 훅/컨셉/캐릭터 3개 생성기를 JSON 모드로 호출해 후보를 구조화
+        - 훅·컨셉: 라디오 선택 → '적용' 버튼이 필드에 직접 기입 후 st.rerun()
+        - 캐릭터: 멀티셀렉트 → 교체 저장 / 기존 목록에 추가 (JSON 수동 편집 불필요)
+        - parser.extract_json() 도입 (코드펜스·설명문·트레일링 콤마·스마트 인용부호 관용 처리)
+        - 파싱 실패 시 원문 마크다운 표시로 폴백 — 기능이 죽지 않는다
+        - 세션 키 신설: cand_hooks / cand_concepts / cand_chars
+          ※ 후보는 적용 시 소거되는 임시 상태이므로 backup_payload에는 의도적으로 넣지 않았다.
+            (defaults에만 등록. 향후 패치에서 누락으로 오인하지 않도록 명시)
 """
 
 import json
@@ -24,7 +33,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import prompt as P
-from parser import parse_uploaded_file, truncate_for_prompt
+from parser import parse_uploaded_file, truncate_for_prompt, extract_json
 
 try:
     import anthropic
@@ -246,6 +255,7 @@ def _init_state():
         "characters": [], "chapter_map": "", "treatments": {},
         "branches": {}, "scenes": {}, "flowchart": "", "manuscript": "",
         "playtime": {}, "choice_audit": {},
+        "cand_hooks": {}, "cand_concepts": {}, "cand_chars": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -347,7 +357,7 @@ with tabs[1]:
     proj["world"] = st.text_area("세계관 원포인트 (고립·공존 공간 등)", value=proj["world"], height=70)
     st.session_state["project"] = proj
 
-    st.markdown('<div class="callout"><b>① 훅 발굴</b> — 아이디어 한 조각만 있어도 시작하세요. 완성된 한 줄 훅 후보를 뽑아드립니다.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="callout"><b>① 훅 발굴</b> — 아이디어 한 조각만 있어도 시작하세요. 후보를 뽑아 드리면 원하는 것을 골라 바로 적용합니다.</div>', unsafe_allow_html=True)
     fragment = st.text_input("재료 한두 조각 (막연해도 됩니다)",
         placeholder="예: 좀비 / 요가복 / 회사 상사 / 무인도 / 룸메이트")
     if st.button("💡 한 줄 훅 후보 생성", key="btn_hook"):
@@ -355,33 +365,161 @@ with tabs[1]:
             st.error("재료를 한 조각이라도 입력하세요. (단어 하나면 충분합니다)")
         else:
             with st.spinner("FMV 훅 공식으로 후보를 뽑는 중..."):
-                st.markdown(call_claude(
-                    P.build_hook_finder_prompt(fragment, proj["target"]),
-                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
-                st.caption("💡 마음에 드는 훅을 위 '한 줄 훅' 칸에 옮겨 적으면 다음 단계로 이어집니다.")
+                raw = call_claude(
+                    P.build_hook_finder_prompt(fragment, proj["target"], as_json=True),
+                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+                data = extract_json(raw)
+                st.session_state["cand_hooks"] = {
+                    "raw": raw,
+                    "items": (data or {}).get("candidates", []) if isinstance(data, dict) else [],
+                    "recommend": (data or {}).get("recommend", {}) if isinstance(data, dict) else {},
+                }
 
-    st.markdown('<div class="callout"><b>② 컨셉 브레인스토밍</b></div>', unsafe_allow_html=True)
+    _ch = st.session_state.get("cand_hooks") or {}
+    if _ch.get("items"):
+        _rec = _ch.get("recommend") or {}
+        opts = []
+        for i, it in enumerate(_ch["items"]):
+            tag = ""
+            if it.get("hook") == _rec.get("commercial"):
+                tag += " ⭐상업성"
+            if it.get("hook") == _rec.get("distinctive"):
+                tag += " ✨차별화"
+            opts.append(f"{i+1}. [{it.get('subconcept','?')}] {it.get('hook','')}{tag}")
+        sel = st.radio("훅 후보 — 하나를 고르세요", opts, key="pick_hook", index=0)
+        it = _ch["items"][opts.index(sel)]
+        st.markdown(
+            f'<div class="mode-card">'
+            f'<b>고립 공간</b> — {it.get("isolation","-")}<br>'
+            f'<b>공략 대상 구성</b> — {it.get("cast","-")}<br>'
+            f'<b>관계 압력</b> — {it.get("pressure","-")}<br>'
+            f'<b>서브컨셉</b> — {it.get("subconcept","-")}</div>',
+            unsafe_allow_html=True)
+        hk1, hk2 = st.columns([1, 2])
+        with hk1:
+            if st.button("✅ 이 후보 적용", key="apply_hook", use_container_width=True):
+                proj["hook"] = it.get("hook", "")
+                _w = it.get("isolation", "")
+                _p = it.get("pressure", "")
+                proj["world"] = f"{_w} / {_p}".strip(" /")
+                if it.get("subconcept") in P.SUBCONCEPTS:
+                    proj["subconcept"] = it["subconcept"]
+                st.session_state["project"] = proj
+                st.session_state["cand_hooks"] = {}
+                st.success("적용 완료 — 위 필드에 반영했습니다.")
+                st.rerun()
+        with hk2:
+            st.caption("적용하면 한 줄 훅 · 세계관 원포인트 · 서브컨셉이 위 필드에 자동 입력됩니다.")
+    elif _ch.get("raw"):
+        st.warning("후보를 구조화하지 못했습니다. 아래 원문에서 직접 옮겨 주세요.")
+        st.markdown(_ch["raw"])
+
+    st.markdown('<div class="callout"><b>② 컨셉 브레인스토밍</b> — 소재 키워드만 넣으세요. ①의 결과를 붙여넣지 않아도 됩니다.</div>', unsafe_allow_html=True)
     keywords = st.text_area("소재 키워드",
         placeholder="예: 좀비 아포칼립스, 셸터 고립, 미녀 생존자들, 지켜야 하는 남자 주인공", height=70)
     if st.button("🔥 컨셉 후보 생성", key="btn_concept"):
         with st.spinner("상업성 있는 컨셉 후보를 뽑는 중..."):
-            st.markdown(call_claude(P.build_concept_prompt(proj, keywords),
-                                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
+            raw = call_claude(P.build_concept_prompt(proj, keywords, as_json=True),
+                              max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+            data = extract_json(raw)
+            st.session_state["cand_concepts"] = {
+                "raw": raw,
+                "items": (data or {}).get("candidates", []) if isinstance(data, dict) else [],
+            }
 
-    st.markdown('<div class="callout"><b>③ 공략 캐릭터 설계</b></div>', unsafe_allow_html=True)
+    _cc = st.session_state.get("cand_concepts") or {}
+    if _cc.get("items"):
+        opts = [f"{it.get('label','?')} · {it.get('subconcept','?')} — {it.get('hook','')}"
+                for it in _cc["items"]]
+        sel = st.radio("컨셉 후보 — 하나를 고르세요", opts, key="pick_concept", index=0)
+        it = _cc["items"][opts.index(sel)]
+        st.markdown(
+            f'<div class="mode-card">'
+            f'<b>훅</b> — {it.get("hook","-")}<br>'
+            f'<b>세계관 원포인트</b> — {it.get("world","-")}<br>'
+            f'<b>강점</b> — {it.get("strength","-")}<br>'
+            f'<b>리스크</b> — {it.get("risk","-")}</div>',
+            unsafe_allow_html=True)
+        cc1, cc2 = st.columns([1, 2])
+        with cc1:
+            if st.button("✅ 이 컨셉 적용", key="apply_concept", use_container_width=True):
+                proj["hook"] = it.get("hook", proj["hook"])
+                proj["world"] = it.get("world", proj["world"])
+                if it.get("subconcept") in P.SUBCONCEPTS:
+                    proj["subconcept"] = it["subconcept"]
+                st.session_state["project"] = proj
+                st.session_state["cand_concepts"] = {}
+                st.success("적용 완료 — 위 필드에 반영했습니다.")
+                st.rerun()
+        with cc2:
+            st.caption("적용하면 한 줄 훅 · 세계관 원포인트 · 서브컨셉이 위 필드에 자동 입력됩니다.")
+    elif _cc.get("raw"):
+        st.warning("후보를 구조화하지 못했습니다. 아래 원문에서 직접 옮겨 주세요.")
+        st.markdown(_cc["raw"])
+
+    st.markdown('<div class="callout"><b>③ 공략 캐릭터 설계</b> — 생성 후 쓸 캐릭터만 체크해서 저장하세요. JSON을 손으로 쓰지 않아도 됩니다.</div>', unsafe_allow_html=True)
     n_char = st.slider("공략 캐릭터 수", 2, 5, 4)
     if st.button("👥 캐릭터 라인업 생성", key="btn_char"):
         with st.spinner("컨셉 비중복·난이도 차등으로 설계하는 중..."):
-            st.markdown(call_claude(
-                P.build_character_prompt(proj, n_char, st.session_state["characters"]),
-                max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
-            st.caption("💡 확정한 캐릭터는 아래에 정리해 저장하세요.")
-    with st.expander("✏️ 확정 캐릭터 저장 (JSON)"):
-        raw = st.text_area("이름/concept/difficulty/charm/conflict",
+            raw = call_claude(
+                P.build_character_prompt(proj, n_char, st.session_state["characters"], as_json=True),
+                max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+            data = extract_json(raw)
+            st.session_state["cand_chars"] = {
+                "raw": raw,
+                "items": (data or {}).get("characters", []) if isinstance(data, dict) else [],
+            }
+
+    _cs = st.session_state.get("cand_chars") or {}
+    if _cs.get("items"):
+        st.caption("생성된 라인업")
+        for i, c in enumerate(_cs["items"]):
+            st.markdown(
+                f'<div class="mode-card"><b>{i+1}. {c.get("name","(이름미정)")}</b> '
+                f'<span class="seq">{c.get("difficulty","보통")}</span><br>'
+                f'아키타입 — {c.get("archetype","-")}<br>'
+                f'컨셉 — {c.get("concept","-")}<br>'
+                f'매력 — {c.get("charm","-")}<br>'
+                f'갈등 — {c.get("conflict","-")}<br>'
+                f'첫 등장 — {c.get("first_impression","-")}</div>',
+                unsafe_allow_html=True)
+        names = [f"{i+1}. {c.get('name','(이름미정)')}" for i, c in enumerate(_cs["items"])]
+        picks = st.multiselect("저장할 캐릭터를 고르세요", names, default=names, key="pick_chars")
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            if st.button("💾 선택 캐릭터로 교체 저장", key="apply_chars", use_container_width=True):
+                chosen = [_cs["items"][names.index(p)] for p in picks]
+                st.session_state["characters"] = chosen
+                st.session_state["cand_chars"] = {}
+                st.success(f"{len(chosen)}명 저장 완료")
+                st.rerun()
+        with sc2:
+            if st.button("➕ 기존 목록에 추가", key="append_chars", use_container_width=True):
+                chosen = [_cs["items"][names.index(p)] for p in picks]
+                _have = {c.get("name") for c in st.session_state["characters"]}
+                _new = [c for c in chosen if c.get("name") not in _have]
+                _dup = [c.get("name") for c in chosen if c.get("name") in _have]
+                st.session_state["characters"] = st.session_state["characters"] + _new
+                st.session_state["cand_chars"] = {}
+                if _dup:
+                    st.warning("이름이 중복돼 제외했습니다: " + ", ".join(_dup)
+                               + " — 같은 이름이 두 명이면 씬 대사 표기가 깨집니다.")
+                st.success(f"{len(_new)}명 추가 — 총 {len(st.session_state['characters'])}명")
+                st.rerun()
+    elif _cs.get("raw"):
+        st.warning("라인업을 구조화하지 못했습니다. 아래 원문을 참고해 수동 저장하세요.")
+        st.markdown(_cs["raw"])
+
+    if st.session_state["characters"]:
+        st.caption(f"현재 확정 캐릭터 {len(st.session_state['characters'])}명 — "
+                   + " / ".join(c.get("name", "?") for c in st.session_state["characters"]))
+    with st.expander("✏️ 확정 캐릭터 직접 편집 (JSON)"):
+        st.caption("위 선택 저장으로 충분합니다. 세부 수정이 필요할 때만 사용하세요.")
+        raw_json = st.text_area("이름/concept/difficulty/charm/conflict",
             value=json.dumps(st.session_state["characters"], ensure_ascii=False, indent=2), height=180)
         if st.button("💾 캐릭터 저장", key="save_char"):
             try:
-                st.session_state["characters"] = json.loads(raw)
+                st.session_state["characters"] = json.loads(raw_json)
                 st.success(f"{len(st.session_state['characters'])}명 저장 완료")
             except Exception as e:
                 st.error(f"JSON 오류: {e}")

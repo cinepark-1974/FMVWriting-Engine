@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS FMV ENGINE v1.0
-# parser.py — 원고/기획서 파일 파서 (각색 모드 입력용)
+# BLUE JEANS FMV ENGINE v1.2.0
+# parser.py — 원고/기획서 파일 파서 + JSON 관용 추출기
 # © 2026 BLUE JEANS PICTURES
 #
 # 지원 형식: DOCX / PDF / TXT / MD
@@ -82,3 +82,84 @@ def truncate_for_prompt(text, max_chars=40000):
         + f"\n\n[...중략 (전체 {len(text):,}자 중 일부 생략)...]\n\n"
         + text[-tail:]
     )
+
+
+def extract_json(text):
+    """
+    모델 응답에서 JSON 객체/배열을 관용적으로 추출한다. (v1.2.0)
+
+    모델은 순수 JSON만 달라고 지시해도 다음처럼 응답하는 경우가 있다.
+      - ```json 코드펜스로 감싼다
+      - 앞뒤에 설명 문장을 붙인다
+      - 스마트 인용부호를 쓴다
+      - 마지막 항목 뒤에 쉼표를 남긴다
+
+    파싱 성공 시 dict/list, 실패 시 None을 반환한다.
+    None이면 호출부는 원문 텍스트 표시로 폴백해야 한다.
+    """
+    if not text or not text.strip():
+        return None
+
+    s = text.strip()
+
+    # 1) 코드펜스 제거
+    if "```" in s:
+        blocks = []
+        parts = s.split("```")
+        for i in range(1, len(parts), 2):
+            blk = parts[i]
+            if blk.lower().startswith("json"):
+                blk = blk[4:]
+            blocks.append(blk.strip())
+        if blocks:
+            s = max(blocks, key=len)
+
+    # 2) 최외곽 괄호 구간만 잘라낸다 (앞뒤 설명 문장 제거)
+    starts = [i for i in (s.find("{"), s.find("[")) if i != -1]
+    if not starts:
+        return None
+    start = min(starts)
+    opener = s[start]
+    closer = "}" if opener == "{" else "]"
+    depth, end, in_str, esc = 0, None, False, False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == opener:
+            depth += 1
+        elif c == closer:
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    candidate = s[start:end] if end else s[start:]
+
+    # 3) 단계적 복구 시도
+    import json as _json
+    import re as _re
+
+    attempts = [candidate]
+    # 스마트 인용부호 정규화
+    fixed = (candidate
+             .replace("\u201c", '"').replace("\u201d", '"')
+             .replace("\u2018", "'").replace("\u2019", "'"))
+    attempts.append(fixed)
+    # 트레일링 콤마 제거
+    attempts.append(_re.sub(r",(\s*[}\]])", r"\1", fixed))
+
+    for a in attempts:
+        try:
+            return _json.loads(a)
+        except Exception:
+            continue
+    return None
+
