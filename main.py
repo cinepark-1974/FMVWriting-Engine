@@ -1,5 +1,5 @@
 """
-🎬 BLUE JEANS FMV ENGINE v1.2.0 — main.py
+🎬 BLUE JEANS FMV ENGINE v1.2.1 — main.py
 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 STEP 0~7 파이프라인 · 집필: Opus / 구조·검증: Sonnet
 © 2026 BLUE JEANS PICTURES
@@ -25,6 +25,20 @@ v1.2.0  (2026-07-28) STEP 1 후보 선택 방식 전환 — 복사·붙여넣기
         - 세션 키 신설: cand_hooks / cand_concepts / cand_chars
           ※ 후보는 적용 시 소거되는 임시 상태이므로 backup_payload에는 의도적으로 넣지 않았다.
             (defaults에만 등록. 향후 패치에서 누락으로 오인하지 않도록 명시)
+v1.2.1  (2026-07-28) 출력 절단·빈 응답 사고 수정. (실측 백업 JSON 기반)
+        - 원인: v1.1.0에서 출력 양식(표 4종)을 늘렸는데 max_tokens를 5000으로 방치.
+          한국어는 문자당 토큰 소모가 크므로 표 출력이 1,200~2,600자에서 절단됐다.
+          실측: chapter_map 1,159자 · branches['소은'] 704자 모두 문장 중간 절단.
+        - max_tokens 재산정: CONCEPT 10k / CHAPTER 20k / BRANCH 20k /
+          SCENE 10k / ADAPT 16k / DEFAULT 10k
+        - call_claude 개편: stop_reason 확보(max_tokens·refusal·end_turn 구분),
+          1회차 스트리밍 / 2회차 비스트리밍(messages.create) 재시도,
+          절단 시 경고 표시, 빈 응답 시 원인별 안내
+        - check_truncation() 신설 — 저장된 본문·복원 백업의 절단을 정적 판정
+          주입: STEP2 챕터맵 표시 / STEP3 분기표 저장 / STEP6 흐름도 입력 전
+        - 'API 진단' 패널 신설 (입력·출력·종료 사유·경로 표시)
+        - 세션 키 신설: last_api_diag (defaults 전용, 임시 상태)
+        - 전 호출부에 label 부여 — 어느 단계에서 실패했는지 진단에 남는다
 """
 
 import json
@@ -44,11 +58,15 @@ except ImportError:
 MODEL_OPUS = "claude-opus-4-8"
 MODEL_SONNET = "claude-sonnet-5"
 
-MAX_TOKENS_CONCEPT = 5000
-MAX_TOKENS_CHAPTER = 5000
-MAX_TOKENS_BRANCH = 5000
-MAX_TOKENS_SCENE = 4000
-MAX_TOKENS_ADAPT = 6000
+# max_tokens — 한국어 출력 기준으로 산정 (v1.2.1)
+# 한국어는 문자당 토큰 소모가 영어의 2~3배다. 표 형식 출력은 더 든다.
+# 5000 토큰으로는 한국어 표 출력이 1,200~2,600자에서 절단된다. (v1.2.0 실측)
+MAX_TOKENS_CONCEPT = 10000   # 후보 3~6개 JSON
+MAX_TOKENS_CHAPTER = 20000   # 챕터맵(산출표+6챕터+엔딩) · 트리트먼트(EP6+표2종)
+MAX_TOKENS_BRANCH = 20000    # 노드 분기표 + 감사표 3종 — 가장 무겁다
+MAX_TOKENS_SCENE = 10000     # 씬 원고 1개
+MAX_TOKENS_ADAPT = 16000     # 원고 해체
+MAX_TOKENS_DEFAULT = 10000   # 정책검증 · 흐름도 · 요약
 
 st.set_page_config(
     page_title="BLUE JEANS · FMV Engine",
@@ -124,41 +142,112 @@ def _get_api_key():
     return st.session_state.get("api_key", "").strip()
 
 
-def call_claude(prompt_text, max_tokens=4096, model=None):
+def _extract_text(msg):
+    """messages.create 응답에서 text 블록만 이어붙인다."""
+    out = []
+    for b in getattr(msg, "content", []) or []:
+        if getattr(b, "type", "") == "text":
+            out.append(getattr(b, "text", ""))
+    return "".join(out).strip()
+
+
+def call_claude(prompt_text, max_tokens=MAX_TOKENS_DEFAULT, model=None, label=""):
+    """
+    Claude 호출. (v1.2.1 — 실패 원인을 감추지 않는다)
+
+    1회차는 스트리밍, 2회차는 비스트리밍으로 재시도한다.
+      (스트림에서만 빈 응답이 나오는 경우가 있어 경로를 바꿔 확인한다)
+    stop_reason을 반드시 확보해 절단·거부를 구분한다.
+      - max_tokens : 출력이 잘렸다 → 경고를 띄운다 (본문은 그대로 반환)
+      - refusal    : 모델이 응답을 거부했다 → 프롬프트 소재를 손봐야 한다
+      - end_turn   : 정상 완료
+    진단 결과는 st.session_state['last_api_diag']에 남겨 UI에서 확인할 수 있다.
+    """
+    diag = {
+        "label": label, "model": model or MODEL_SONNET,
+        "prompt_chars": len(prompt_text), "max_tokens": max_tokens,
+        "stop_reason": None, "out_chars": 0, "out_tokens": None,
+        "truncated": False, "path": None, "error": None,
+    }
+    st.session_state["last_api_diag"] = diag
+
     if not _HAS_ANTHROPIC:
+        diag["error"] = "anthropic 패키지 미설치"
         st.error("anthropic 패키지가 설치되지 않았습니다. requirements.txt를 확인하세요.")
         return ""
     key = _get_api_key()
     if not key:
+        diag["error"] = "API Key 없음"
         st.error("API Key가 없습니다. Secrets에 넣거나 아래 설정에서 입력하세요.")
         return ""
     if model is None:
         model = MODEL_SONNET
+        diag["model"] = model
+
     last_error = None
     for attempt in range(2):
         try:
             client = anthropic.Anthropic(api_key=key)
-            full = []
-            with client.messages.stream(
-                model=model, max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt_text}],
-            ) as stream:
-                for text in stream.text_stream:
-                    full.append(text)
-            result = "".join(full).strip()
+            payload = dict(model=model, max_tokens=max_tokens,
+                           messages=[{"role": "user", "content": prompt_text}])
+
+            if attempt == 0:
+                diag["path"] = "stream"
+                full = []
+                with client.messages.stream(**payload) as stream:
+                    for text in stream.text_stream:
+                        full.append(text)
+                    final = stream.get_final_message()
+                result = "".join(full).strip()
+                stop = getattr(final, "stop_reason", None)
+                usage = getattr(final, "usage", None)
+            else:
+                diag["path"] = "create (비스트리밍 재시도)"
+                msg = client.messages.create(**payload)
+                result = _extract_text(msg)
+                stop = getattr(msg, "stop_reason", None)
+                usage = getattr(msg, "usage", None)
+
+            diag["stop_reason"] = stop
+            diag["out_chars"] = len(result)
+            diag["out_tokens"] = getattr(usage, "output_tokens", None) if usage else None
+            diag["truncated"] = (stop == "max_tokens")
+
             if not result or len(result) < 30:
-                last_error = f"응답 너무 짧음 ({len(result)}자)"
+                last_error = f"본문 {len(result)}자 · stop_reason={stop}"
                 if attempt == 0:
-                    time.sleep(2); continue
-                st.error(f"⚠️ API 응답 부족 (2회 실패): {last_error}")
+                    time.sleep(2)
+                    continue
+                st.error(f"⚠️ 응답 본문이 비었습니다 — {last_error}")
+                if stop == "refusal":
+                    st.warning(
+                        "모델이 응답을 거부했습니다(stop_reason=refusal). "
+                        "프롬프트에 포함된 소재·표현 중 정책 판정에 걸리는 부분이 있습니다. "
+                        "해당 캐릭터의 트리트먼트에서 강제·구금·비동의로 읽힐 수 있는 서술을 "
+                        "완화한 뒤 다시 시도하세요. 룰셋을 끌 필요는 없습니다.")
+                else:
+                    st.caption(
+                        f"진단 — 모델 {model} · 입력 {len(prompt_text):,}자 · "
+                        f"max_tokens {max_tokens:,} · 경로 {diag['path']}. "
+                        "네트워크·rate limit·일시 과부하 가능. 아래 'API 진단'을 확인하세요.")
                 return ""
+
+            if diag["truncated"]:
+                st.warning(
+                    f"⚠️ 출력이 max_tokens({max_tokens:,})에서 절단됐습니다. "
+                    f"본문 {len(result):,}자만 생성됐습니다. "
+                    "표 마지막 행이 중간에 끊겼을 수 있으니 그대로 다음 단계로 넘기지 마시고, "
+                    "캐릭터 수나 요구 섹션을 줄여 다시 생성하거나 절단 지점을 직접 이어 주세요.")
             return result
+
         except Exception as e:
             last_error = f"{type(e).__name__}: {str(e)[:180]}"
+            diag["error"] = last_error
             if attempt == 0:
-                time.sleep(3); continue
+                time.sleep(3)
+                continue
             st.error(f"❌ API 호출 실패 (2회 시도): {last_error}")
-            st.caption("네트워크·rate limit·토큰 한도·안전 필터·인증 오류 가능. 잠시 후 재시도하세요.")
+            st.caption("네트워크·rate limit·토큰 한도·인증 오류 가능. 잠시 후 재시도하세요.")
             return ""
 
 
@@ -244,6 +333,50 @@ def check_subtitle_length(script_text, limit=SUBTITLE_MAX_CHARS):
     return over
 
 
+def _norm_heading(line):
+    """헤딩 줄에서 '#' 레벨과 공백을 제거해 비교용으로 정규화한다."""
+    return line.strip().lstrip("#").strip()
+
+
+def check_truncation(text, required_marker=None):
+    """
+    저장된 본문이 절단됐는지 정적으로 판정한다. (v1.2.1 — 진단 전용, 본문 수정 없음)
+
+    판정 근거는 두 가지만 쓴다. 문장 종결 여부는 쓰지 않는다.
+    (한국어 항목은 '…루트 종료'처럼 마침표 없이 끝나는 것이 정상이라 오탐이 난다)
+      1) 출력 양식이 요구하는 마지막 섹션이 없다 → 끝까지 생성되지 않았다
+      2) 마지막 줄이 표 행인데 '|'로 닫히지 않았다 → 표 중간에서 끊겼다
+
+    required_marker는 헤딩 '레벨을 무시하고' 비교한다.
+    모델이 같은 섹션을 '## 엔딩 연결' 또는 '### 엔딩 연결'로 번갈아 쓰기 때문이다.
+    (실측: 트리트먼트 4건 중 3건이 ##, 1건이 ### — 레벨 고정 비교는 오탐을 낸다)
+    """
+    if not text or not text.strip():
+        return {"ok": False, "reason": "본문이 비어 있습니다.", "tail": ""}
+    t = text.rstrip()
+    tail = t[-40:]
+    lines = [l for l in t.splitlines() if l.strip()]
+    last = lines[-1].strip() if lines else ""
+
+    if last.startswith("|") and not last.endswith("|"):
+        return {"ok": False, "reason": "표 행이 중간에서 끊겼습니다.", "tail": tail}
+
+    if required_marker:
+        want = _norm_heading(required_marker)
+        heads = {_norm_heading(l) for l in lines if l.strip().startswith("#")}
+        if want not in heads:
+            return {"ok": False,
+                    "reason": f"필수 섹션 '{want}'이 없습니다. 끝까지 생성되지 않았습니다.",
+                    "tail": tail}
+    return {"ok": True, "reason": "완결 확인 — 절단 흔적 없음", "tail": tail}
+
+
+# 각 단계 출력 양식의 마지막 섹션 마커 (check_truncation 판정 기준)
+TAIL_MARKER_CHAPTERMAP = "## 캐릭터별 엔딩 챕터"
+TAIL_MARKER_TREATMENT = "### 엔딩 연결"
+TAIL_MARKER_BRANCH = "## 수집요소 도달성 검증"
+
+
 # ══════════════════════════════════════════════
 # 세션 상태
 # ══════════════════════════════════════════════
@@ -256,6 +389,7 @@ def _init_state():
         "branches": {}, "scenes": {}, "flowchart": "", "manuscript": "",
         "playtime": {}, "choice_audit": {},
         "cand_hooks": {}, "cand_concepts": {}, "cand_chars": {},
+        "last_api_diag": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -278,6 +412,27 @@ else:
             "Anthropic API Key", type="password", value=st.session_state["api_key"],
             help="Streamlit Secrets에 ANTHROPIC_API_KEY를 넣으면 자동 로드됩니다.",
         )
+
+with st.expander("🔎 API 진단 — 마지막 호출 결과", expanded=False):
+    _dg = st.session_state.get("last_api_diag") or {}
+    if not _dg:
+        st.caption("아직 호출 기록이 없습니다. 생성 버튼을 누르면 여기에 결과가 남습니다.")
+    else:
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("단계", _dg.get("label") or "-")
+        g2.metric("입력", f"{_dg.get('prompt_chars', 0):,}자")
+        g3.metric("출력", f"{_dg.get('out_chars', 0):,}자",
+                  f"{_dg.get('out_tokens')}토큰" if _dg.get("out_tokens") else None)
+        g4.metric("종료 사유", str(_dg.get("stop_reason") or "-"))
+        st.caption(
+            f"모델 {_dg.get('model')} · max_tokens {_dg.get('max_tokens'):,} · 경로 {_dg.get('path')}"
+            + (f" · 오류 {_dg['error']}" if _dg.get("error") else ""))
+        if _dg.get("truncated"):
+            st.warning("이 호출은 max_tokens에서 절단됐습니다. 저장된 본문 끝이 잘려 있을 수 있습니다.")
+        elif _dg.get("stop_reason") == "refusal":
+            st.error("모델이 응답을 거부했습니다. 프롬프트 소재를 완화해야 합니다.")
+        elif _dg.get("stop_reason") == "end_turn":
+            st.success("정상 완료 — 출력이 끝까지 생성됐습니다.")
 
 # 백업 / 복원
 with st.expander("💾 작업 저장 / 불러오기"):
@@ -335,7 +490,8 @@ with tabs[0]:
         with st.spinner("원고를 해체해 캐릭터·분기점을 추출하는 중..."):
             manuscript = truncate_for_prompt(st.session_state["manuscript"])
             st.markdown(call_claude(P.build_adaptation_prompt(manuscript, target0),
-                                    max_tokens=MAX_TOKENS_ADAPT, model=MODEL_SONNET))
+                                    max_tokens=MAX_TOKENS_ADAPT, model=MODEL_SONNET,
+                                    label="STEP0 원고각색"))
 
 
 # ── STEP 1. 컨셉 & 캐릭터 ─────────────────────────
@@ -367,7 +523,7 @@ with tabs[1]:
             with st.spinner("FMV 훅 공식으로 후보를 뽑는 중..."):
                 raw = call_claude(
                     P.build_hook_finder_prompt(fragment, proj["target"], as_json=True),
-                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+                    max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET, label="STEP1 훅발굴")
                 data = extract_json(raw)
                 st.session_state["cand_hooks"] = {
                     "raw": raw,
@@ -420,7 +576,8 @@ with tabs[1]:
     if st.button("🔥 컨셉 후보 생성", key="btn_concept"):
         with st.spinner("상업성 있는 컨셉 후보를 뽑는 중..."):
             raw = call_claude(P.build_concept_prompt(proj, keywords, as_json=True),
-                              max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+                              max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET,
+                              label="STEP1 컨셉후보")
             data = extract_json(raw)
             st.session_state["cand_concepts"] = {
                 "raw": raw,
@@ -463,7 +620,7 @@ with tabs[1]:
         with st.spinner("컨셉 비중복·난이도 차등으로 설계하는 중..."):
             raw = call_claude(
                 P.build_character_prompt(proj, n_char, st.session_state["characters"], as_json=True),
-                max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET)
+                max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET, label="STEP1 캐릭터")
             data = extract_json(raw)
             st.session_state["cand_chars"] = {
                 "raw": raw,
@@ -576,8 +733,13 @@ with tabs[2]:
         if st.button("🗺️ 챕터맵 설계", key="btn_cmap"):
             with st.spinner("6챕터 이상 구조로 설계하는 중..."):
                 st.session_state["chapter_map"] = call_claude(
-                    P.build_chaptermap_prompt(proj, chars), max_tokens=MAX_TOKENS_CHAPTER, model=MODEL_SONNET)
+                    P.build_chaptermap_prompt(proj, chars), max_tokens=MAX_TOKENS_CHAPTER,
+                    model=MODEL_SONNET, label="STEP2 챕터맵")
         if st.session_state["chapter_map"]:
+            _tc = check_truncation(st.session_state["chapter_map"], TAIL_MARKER_CHAPTERMAP)
+            if not _tc["ok"]:
+                st.error(f"⚠️ 저장된 챕터맵이 완결되지 않았습니다 — {_tc['reason']} "
+                         f"(끝부분: …{_tc['tail']}) 다시 생성하시기를 권합니다.")
             st.markdown(st.session_state["chapter_map"])
         st.markdown("---")
         names = [c.get("name", f"캐릭터{i+1}") for i, c in enumerate(chars)]
@@ -589,8 +751,13 @@ with tabs[2]:
                 with st.spinner(f"{tchar} 루트 트리트먼트 작성 중..."):
                     res = call_claude(
                         P.build_treatment_prompt(proj, chars, st.session_state["chapter_map"], tchar),
-                        max_tokens=MAX_TOKENS_CHAPTER, model=MODEL_SONNET)
+                        max_tokens=MAX_TOKENS_CHAPTER, model=MODEL_SONNET,
+                        label=f"STEP2 트리트먼트({tchar})")
                     st.session_state["treatments"][tchar] = res
+                    _tt = check_truncation(res, TAIL_MARKER_TREATMENT)
+                    if not _tt["ok"]:
+                        st.error(f"⚠️ 트리트먼트가 완결되지 않았습니다 — {_tt['reason']} "
+                                 f"(끝부분: …{_tt['tail']})")
                     st.markdown(res)
 
 
@@ -614,8 +781,14 @@ with tabs[3]:
             with st.spinner(f"{bchar} 루트 분기 구조를 설계하는 중..."):
                 res = call_claude(
                     P.build_branch_design_prompt(proj, chars, treatment, bchar),
-                    max_tokens=MAX_TOKENS_BRANCH, model=MODEL_SONNET)
+                    max_tokens=MAX_TOKENS_BRANCH, model=MODEL_SONNET,
+                    label=f"STEP3 분기설계({bchar})")
                 st.session_state["branches"][bchar] = res
+                _tb = check_truncation(res, TAIL_MARKER_BRANCH)
+                if not _tb["ok"]:
+                    st.error(f"⚠️ 분기표가 완결되지 않았습니다 — {_tb['reason']} "
+                             f"(끝부분: …{_tb['tail']}) 이 상태로 STEP 6 흐름도에 넘기면 "
+                             "노드가 누락된 채 렌더링됩니다.")
                 st.markdown(res)
 
         st.markdown("---")
@@ -669,7 +842,8 @@ with tabs[4]:
             with st.spinner("씬을 집필하는 중..."):
                 res = call_claude(
                     P.build_scene_writing_prompt(proj, chars, node_info, prev_scene or None),
-                    max_tokens=MAX_TOKENS_SCENE, model=MODEL_OPUS)
+                    max_tokens=MAX_TOKENS_SCENE, model=MODEL_OPUS,
+                    label=f"STEP4 씬집필({node_info['node_id']})")
                 st.session_state["scenes"][node_info["node_id"]] = res
                 st.code(res, language="markdown")
         elif st.session_state["scenes"]:
@@ -720,7 +894,8 @@ with tabs[5]:
             st.error("검토할 내용을 입력하세요.")
         else:
             with st.spinner("스팀 정책 위반 소지를 점검하는 중..."):
-                st.markdown(call_claude(P.build_steam_check_prompt(content), model=MODEL_SONNET))
+                st.markdown(call_claude(P.build_steam_check_prompt(content), model=MODEL_SONNET,
+                                        label="STEP5 정책검증"))
 
 
 # ── STEP 6. 분기 흐름도 ───────────────────────────
@@ -730,9 +905,16 @@ with tabs[6]:
     node_table = st.text_area("노드 분기표 (STEP 3 결과)",
         value="\n\n".join(st.session_state["branches"].values()) if st.session_state["branches"] else "",
         height=180)
+    if st.session_state["branches"]:
+        _bad = [k for k, v in st.session_state["branches"].items()
+                if not check_truncation(v, TAIL_MARKER_BRANCH)["ok"]]
+        if _bad:
+            st.warning("다음 루트의 분기표가 완결되지 않았습니다: " + ", ".join(_bad)
+                       + " — 흐름도에 노드가 누락될 수 있습니다. STEP 3에서 먼저 재생성하세요.")
     if st.button("🕸️ 흐름도 생성", key="btn_flow"):
         with st.spinner("Mermaid 흐름도를 생성하는 중..."):
-            code = call_claude(P.build_flowchart_prompt(node_table), model=MODEL_SONNET)
+            code = call_claude(P.build_flowchart_prompt(node_table), model=MODEL_SONNET,
+                               label="STEP6 흐름도")
             st.session_state["flowchart"] = code.replace("```mermaid", "").replace("```", "").strip()
     if st.session_state["flowchart"]:
         html = f"""
@@ -791,7 +973,7 @@ with tabs[7]:
                 with st.spinner("기획 요약을 생성하는 중..."):
                     summary = call_claude(
                         P.build_final_summary_prompt(proj, chars, st.session_state["chapter_map"]),
-                        model=MODEL_SONNET)
+                        model=MODEL_SONNET, label="STEP7 기획요약")
                     st.markdown(summary)
                     st.download_button("📥 요약 다운로드 (.md)", data=summary,
                         file_name=f"fmv_summary_{proj.get('title','untitled') or 'untitled'}.md",
