@@ -1,8 +1,14 @@
 """
-🎬 BLUE JEANS FMV ENGINE v1.0 — main.py
+🎬 BLUE JEANS FMV ENGINE v1.0.1 — main.py
 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 STEP 0~7 파이프라인 · 집필: Opus / 구조·검증: Sonnet
 © 2026 BLUE JEANS PICTURES
+
+[변경 이력]
+v1.0    (2026) 초기 빌드. STEP 0~7 파이프라인.
+v1.0.1  (2026-07-28) 외부 레퍼런스 명칭 제거 · 일반화.
+        - UI 스피너 문구의 외부 브랜드 언급을 일반 표현으로 교체
+        - 푸터 버전 표기를 prompt.ENGINE_VERSION 참조로 변경
 """
 
 import json
@@ -260,7 +266,7 @@ with tabs[1]:
         if not fragment.strip():
             st.error("재료를 한 조각이라도 입력하세요. (단어 하나면 충분합니다)")
         else:
-            with st.spinner("스토리타코 훅 공식으로 후보를 뽑는 중..."):
+            with st.spinner("FMV 훅 공식으로 후보를 뽑는 중..."):
                 st.markdown(call_claude(
                     P.build_hook_finder_prompt(fragment, proj["target"]),
                     max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
@@ -270,7 +276,7 @@ with tabs[1]:
     keywords = st.text_area("소재 키워드",
         placeholder="예: 좀비 아포칼립스, 셸터 고립, 미녀 생존자들, 지켜야 하는 남자 주인공", height=70)
     if st.button("🔥 컨셉 후보 생성", key="btn_concept"):
-        with st.spinner("스토리타코 수준 컨셉 후보를 뽑는 중..."):
+        with st.spinner("상업성 있는 컨셉 후보를 뽑는 중..."):
             st.markdown(call_claude(P.build_concept_prompt(proj, keywords),
                                     max_tokens=MAX_TOKENS_CONCEPT, model=MODEL_SONNET))
 
@@ -448,5 +454,6 @@ with tabs[7]:
 
 st.markdown(
     '<div style="text-align:center;font-size:.62rem;padding:30px 0 16px;letter-spacing:2px;opacity:.25;">'
-    '© 2026 BLUE JEANS PICTURES · FMV Engine v1.0 · Opus(집필) + Sonnet(구조·검증)'
+    f'© 2026 BLUE JEANS PICTURES · FMV Engine {P.ENGINE_VERSION} '
+    f'({P.ENGINE_BUILD_DATE}) · Opus(집필) + Sonnet(구조·검증)'
     '</div>', unsafe_allow_html=True)

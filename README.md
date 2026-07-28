@@ -1,4 +1,4 @@
-# 🎬 BLUE JEANS FMV ENGINE v1.0
+# 🎬 BLUE JEANS FMV ENGINE v1.0.1
 
 > BLUE JEANS PICTURES · FMV 각본 작성 엔진
 > 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
@@ -40,7 +40,7 @@ STEP 7. 시뮬레이터 & 출력   — 플레이 테스트 + 기획 요약
 ```
 FMV-Engine/
 ├── main.py              # Streamlit UI + API + 세션/백업 + 시뮬레이터
-├── prompt.py            # 시스템 프롬프트 + 스토리타코 룰셋 + 10개 빌더 함수
+├── prompt.py            # 시스템 프롬프트 + FMV 룰셋 + 빌더 함수
 ├── parser.py            # 원고 파서 (DOCX/PDF/TXT/MD)
 ├── requirements.txt
 ├── README.md
@@ -81,7 +81,8 @@ FMV Engine은 선형 서사 엔진들과 데이터 구조가 다른(노드·분�
 | 버전 | 변경 |
 |------|------|
 | v1.0 | 초기 빌드. STEP 0~7 파이프라인. 관능적 로맨스 톤 LOCKED. 스팀 정책 게이트. 수집요소 도달성 검증. 각색 모드. |
+| v1.0.1 | 외부 레퍼런스 명칭 제거·일반화. STORYTACO_HARD_RULES → FMV_HARD_RULES. ENGINE_VERSION·ENGINE_BUILD_DATE 도입. |
 
 ---
 
-© 2026 BLUE JEANS PICTURES · FMV Engine v1.0
+© 2026 BLUE JEANS PICTURES · FMV Engine v1.0.1

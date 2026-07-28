@@ -1,12 +1,28 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS FMV ENGINE v1.0
+# BLUE JEANS FMV ENGINE v1.0.1
 # prompt.py — System Prompt + FMV Rule Set + Prompt Builder Functions
 # © 2026 BLUE JEANS PICTURES
 #
 # 결과물 유형: 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 # 분기 규모  : 중규모 (엔딩 5~8개, 진짜 선택 20개 내외)
 # 파이프라인 : 독립 엔진 (Idea/Creator에서 JSON 입력 가능, 기획부터 FMV 전용 논리)
+#
+# [변경 이력]
+# v1.0    (2026) 초기 빌드. STEP 0~7 파이프라인.
+#                4대 룰셋(하드 룰 / 톤 LOCKED / 수집요소 도달성 / FMV 집필 문법).
+# v1.0.1  (2026-07-28) 외부 레퍼런스 명칭 제거 · 일반화.
+#                - STORYTACO_HARD_RULES → FMV_HARD_RULES 상수명 변경
+#                  (룰 항목 번호 1~11 및 본문 내용은 그대로 유지)
+#                - 프롬프트 본문의 외부 브랜드 언급을 일반 표현으로 교체
+#                - ENGINE_VERSION / ENGINE_BUILD_DATE 상수 도입
 # ─────────────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════
+# ENGINE VERSION
+# ═══════════════════════════════════════════════════════════
+
+ENGINE_VERSION = "v1.0.1"
+ENGINE_BUILD_DATE = "2026-07-28"
 
 # ═══════════════════════════════════════════════════════════
 # SYSTEM PROMPT
@@ -51,7 +67,7 @@ BRAND PHILOSOPHY
 # 실전 하드 룰 (LOCKED — 위반 금지)
 # ═══════════════════════════════════════════════════════════
 
-STORYTACO_HARD_RULES = """
+FMV_HARD_RULES = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [FMV 구조 하드 룰 — 절대 위반 금지]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -116,7 +132,7 @@ STORYTACO_HARD_RULES = """
     - 이 엔진의 작품은 성인 대상 관능적 로맨스다. 관능적 텐션은 핵심 상품성이다.
     - 그러나 노골적 성행위 직접 묘사는 스팀 판매 중단선이다. 이 선을 넘지 않는다.
     - 허용(판매 유지): 시선의 긴장, 근접·밀착, 키스를 위한 접근, 암시, 손끝·호흡 등
-      감각적 디테일, 옷차림이 만드는 분위기(스토리타코 성공작 수위).
+      감각적 디테일, 옷차림이 만드는 분위기(상업 FMV 통용 수위).
     - 금지(판매 중단): 성행위 직접 묘사, 성기 언급, 노골적 성적 행위의 단계적 서술.
     - 원칙: '덜 보여주고 더 긴장시킨다.' 절제된 관능이 노골적 묘사보다 몰입이 강하고
       정책적으로도 안전하다. 어설픈 노골 묘사가 가장 오글거린다.
@@ -270,12 +286,12 @@ def build_concept_prompt(project, keywords):
     """소재 키워드 → 로맨스 기반 서브컨셉 + 훅 + 세계관 원포인트 제안."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 {TONE_LOCK}
 
 당신은 지금 STEP 1 (컨셉 기획) 단계에 있습니다.
-아래 소재 키워드를 바탕으로, 스토리타코 성공작 수준의 FMV 로맨스 컨셉을 제안하세요.
+아래 소재 키워드를 바탕으로, 상업적으로 검증된 수준의 FMV 로맨스 컨셉을 제안하세요.
 
 {_base_context(project)}
 
@@ -312,7 +328,7 @@ def build_character_prompt(project, n_characters, existing_characters=None):
     existing = _character_block(existing_characters) if existing_characters else "(없음)"
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 당신은 지금 STEP 1 (캐릭터 기획) 단계에 있습니다.
 아래 컨셉에 맞는 공략 캐릭터 {n_characters}명을 설계하세요.
@@ -322,7 +338,7 @@ def build_character_prompt(project, n_characters, existing_characters=None):
 [이미 확정된 캐릭터]
 {existing}
 
-[작성 규칙 — 스토리타코 캐릭터 룰]
+[작성 규칙 — 공략 캐릭터 룰]
 1. 공략 캐릭터끼리 컨셉이 절대 겹치지 않게 한다.
    클리셰 아키타입을 서로 다르게 배분한다.
    (예: 소꿉친구 / 무섭지만 섹시한 연상 상사 / 정의로운 동료 / 순한 옆집 여동생 / 도도한 재벌녀)
@@ -354,7 +370,7 @@ def build_chaptermap_prompt(project, characters):
     """6챕터 이상 챕터맵 + 캐릭터별 에피소드 + 엔딩 챕터 설계."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 당신은 지금 STEP 2 (챕터맵 설계) 단계에 있습니다.
 아래 컨셉과 캐릭터를 바탕으로 전체 챕터맵을 설계하세요.
@@ -364,7 +380,7 @@ def build_chaptermap_prompt(project, characters):
 [공략 캐릭터]
 {_character_block(characters)}
 
-[작성 규칙 — 스토리타코 구조 하드 룰]
+[작성 규칙 — 구조 하드 룰]
 1. 최소 6챕터로 구성한다. (스팀 환불 정책 대응, 절대 준수)
 2. 1챕터는 무료 데모다. 가장 강한 훅과 캐릭터 소개를 여기 집중한다.
    1챕터 말미에는 완전판 구매를 유도하는 강력한 클리프행어를 배치한다.
@@ -404,7 +420,7 @@ def build_treatment_prompt(project, characters, chapter_map, target_character):
     """특정 공략 캐릭터의 루트 트리트먼트(에피소드 5~6개) 작성."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 당신은 지금 STEP 2 (트리트먼트) 단계에 있습니다.
 아래 캐릭터 '{target_character}'의 공략 루트 트리트먼트를 작성하세요.
@@ -452,7 +468,7 @@ def build_branch_design_prompt(project, characters, treatment, target_character)
     """호감도/플래그/아이템 변수 + 인게임 기능 매핑 + 배드엔딩 트랩 설계."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 {COLLECTIBLE_REACHABILITY}
 
@@ -475,7 +491,7 @@ def build_branch_design_prompt(project, characters, treatment, target_character)
 2. 선택지는 세 종류로 구분해 설계한다.
    - 진짜 선택: 호감도/플래그를 바꿔 엔딩을 가른다.
    - 페이크 선택: 연출용. 스토리는 안 바뀌지만 몰입감을 준다. (변동없음)
-   - 즉사 트랩: 선택 실수 시 곧바로 배드엔딩으로 직결. (스토리타코 특징)
+   - 즉사 트랩: 선택 실수 시 곧바로 배드엔딩으로 직결. (멀티 루트 FMV의 대표적 긴장 장치)
 3. 변수를 명시적으로 설계한다.
    - 호감도 게이지: 임계값(예: 50 이상 → 개별 루트 진입)
    - 플래그: 특정 이벤트 발생 여부
@@ -521,7 +537,7 @@ def build_scene_writing_prompt(project, characters, node_info, prev_scene=None):
 
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 {TONE_LOCK}
 
@@ -571,7 +587,7 @@ def build_steam_check_prompt(content):
     """작성된 기획/원고가 스팀 정책을 위반하는지 자동 검증."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 당신은 지금 스팀 정책 검증관입니다.
 아래 내용이 스팀 판매 정책을 위반할 소지가 있는지 냉정하게 점검하세요.
@@ -689,7 +705,7 @@ def build_final_summary_prompt(project, characters, chapter_map):
 
 [작성 규칙]
 1. 한 장 분량의 압축된 기획 요약으로 정리한다.
-2. 스토리타코 기준(6챕터·캐릭터별 엔딩·스팀 정책 준수)이 충족됐는지 체크리스트로 표시한다.
+2. FMV 구조 기준(6챕터·캐릭터별 엔딩·스팀 정책 준수)이 충족됐는지 체크리스트로 표시한다.
 3. 글로벌 소구 포인트와 예상 리스크를 각각 정리한다.
 
 부연 설명 없이 아래 형식으로만 출력하라.
@@ -722,7 +738,7 @@ def build_adaptation_prompt(manuscript, target="여성향(오토메)"):
     """완성 원고(웹소설/웹툰)를 해체해 FMV 각색용 캐릭터·챕터·분기점을 추출."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 당신은 지금 STEP 0 (원고 각색) 단계에 있습니다.
 아래는 이미 완성된 선형 서사 원고(웹소설 또는 웹툰)입니다.
@@ -792,13 +808,13 @@ def build_hook_finder_prompt(fragment, target="남성향"):
     """막연한 재료 한두 개 → FMV 공식에 맞춘 한 줄 훅 후보 5~6개 생성."""
     return f"""{SYSTEM_PROMPT}
 
-{STORYTACO_HARD_RULES}
+{FMV_HARD_RULES}
 
 {TONE_LOCK}
 
 당신은 지금 STEP 1의 선행 단계 '훅 발굴'에 있습니다.
 작가는 아직 완성된 훅이 없고, 막연한 재료 한두 조각만 가지고 있습니다.
-이 재료를 스토리타코 성공작 공식에 태워, 바로 쓸 수 있는 '한 줄 훅' 후보를 만들어 주세요.
+이 재료를 FMV 흥행 훅 공식에 태워, 바로 쓸 수 있는 '한 줄 훅' 후보를 만들어 주세요.
 
 [타깃 성향]
 {target}
@@ -807,7 +823,7 @@ def build_hook_finder_prompt(fragment, target="남성향"):
 {fragment}
 
 [FMV 훅 공식 — 이 골격으로 결합한다]
-스토리타코 성공작의 훅은 대부분 다음 3요소의 결합이다.
+상업 FMV 흥행작의 훅은 대부분 다음 3요소의 결합이다.
   (A) 고립·공존 공간 — 주인공을 빠져나갈 수 없는 한 공간에 가둔다.
       (예: 하숙집 / 벙커 / 온천 / 크루즈 / 산장 / 폐쇄된 회사)
   (B) 이성 캐릭터들만 — 그 공간에 매력적인 공략 대상들만 남긴다.
