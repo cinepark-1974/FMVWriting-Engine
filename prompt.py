@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS FMV ENGINE v1.2.1
+# BLUE JEANS FMV ENGINE v1.2.2
 # prompt.py — System Prompt + FMV Rule Set + Prompt Builder Functions
 # © 2026 BLUE JEANS PICTURES
 #
@@ -42,7 +42,7 @@
 # ENGINE VERSION
 # ═══════════════════════════════════════════════════════════
 
-ENGINE_VERSION = "v1.2.1"
+ENGINE_VERSION = "v1.2.2"
 ENGINE_BUILD_DATE = "2026-07-28"
 
 # ═══════════════════════════════════════════════════════════

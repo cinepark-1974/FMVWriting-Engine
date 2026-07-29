@@ -1,5 +1,5 @@
 """
-🎬 BLUE JEANS FMV ENGINE v1.2.1 — main.py
+🎬 BLUE JEANS FMV ENGINE v1.2.2 — main.py
 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
 STEP 0~7 파이프라인 · 집필: Opus / 구조·검증: Sonnet
 © 2026 BLUE JEANS PICTURES
@@ -39,6 +39,20 @@ v1.2.1  (2026-07-28) 출력 절단·빈 응답 사고 수정. (실측 백업 JSO
         - 'API 진단' 패널 신설 (입력·출력·종료 사유·경로 표시)
         - 세션 키 신설: last_api_diag (defaults 전용, 임시 상태)
         - 전 호출부에 label 부여 — 어느 단계에서 실패했는지 진단에 남는다
+v1.2.2  (2026-07-28) 백업 불러오기 실패 수정. (실측 재현 완료)
+        - 원인: json.load(restore)가 업로드 파일 객체를 EOF까지 소비한 뒤
+          st.rerun()을 호출했다. 재실행 시 업로더는 같은 객체를 그대로 반환하는데
+          읽기 위치가 EOF라 두 번째 파싱이 빈 문자열을 만나 JSONDecodeError가 났다.
+          1회차 성공 메시지는 rerun으로 사라지고 실패 메시지만 남아
+          '복원이 안 된다'로 보였다. (실제로는 1회차에 반영은 됐다)
+        - 조치: restore.seek(0) 후 바이트를 명시적으로 읽어 파싱.
+          파일 서명(name:size)으로 1회만 적용하고 재실행 시에는 재파싱하지 않는다.
+        - PERSIST_KEYS 상수 신설 — 저장·복원 대상 키를 한 곳에서 관리한다.
+          (backup_payload 딕셔너리와 복원 루프가 갈라져 유실되는 사고를 원천 차단)
+        - 복원 리포트 표시: 적용된 키·백업에 없던 키·현재 상태 요약
+        - 탭 위에 '현재 로드 상태' 상시 표시 (제목/훅/캐릭터/챕터맵/트리트먼트/분기표/씬)
+        - 복원 직후 절단 항목 일괄 경고 (챕터맵·분기표·트리트먼트)
+        - 세션 키 신설: restore_sig / restore_report (defaults 전용, 임시 상태)
 """
 
 import json
@@ -390,6 +404,7 @@ def _init_state():
         "playtime": {}, "choice_audit": {},
         "cand_hooks": {}, "cand_concepts": {}, "cand_chars": {},
         "last_api_diag": {},
+        "restore_sig": "", "restore_report": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -435,16 +450,30 @@ with st.expander("🔎 API 진단 — 마지막 호출 결과", expanded=False):
             st.success("정상 완료 — 출력이 끝까지 생성됐습니다.")
 
 # 백업 / 복원
-with st.expander("💾 작업 저장 / 불러오기"):
-    col_a, col_b = st.columns(2)
-    backup_payload = {
-        "project": st.session_state["project"], "characters": st.session_state["characters"],
-        "chapter_map": st.session_state["chapter_map"], "treatments": st.session_state["treatments"],
-        "branches": st.session_state["branches"], "scenes": st.session_state["scenes"],
-        "flowchart": st.session_state["flowchart"],
-        "playtime": st.session_state["playtime"],
-        "choice_audit": st.session_state["choice_audit"],
+# ── 저장·복원 대상 키를 한 곳에서 관리한다 (v1.2.2)
+#    이전에는 backup_payload 딕셔너리를 만들고 그 키를 복원 루프가 재사용했다.
+#    두 곳이 갈라지면 복원 시 데이터가 조용히 유실되므로 단일 상수로 고정한다.
+PERSIST_KEYS = ("project", "characters", "chapter_map", "treatments",
+                "branches", "scenes", "flowchart", "playtime", "choice_audit")
+
+
+def _state_summary():
+    """현재 세션에 무엇이 들어있는지 한 줄로 요약한다."""
+    s = st.session_state
+    return {
+        "제목": s["project"].get("title") or "(무제)",
+        "훅": "있음" if s["project"].get("hook") else "없음",
+        "캐릭터": f"{len(s['characters'])}명",
+        "챕터맵": f"{len(s['chapter_map']):,}자" if s["chapter_map"] else "없음",
+        "트리트먼트": f"{len(s['treatments'])}건",
+        "분기표": f"{len(s['branches'])}건",
+        "씬": f"{len(s['scenes'])}개",
     }
+
+
+with st.expander("💾 작업 저장 / 불러오기", expanded=False):
+    col_a, col_b = st.columns(2)
+    backup_payload = {k: st.session_state[k] for k in PERSIST_KEYS}
     with col_a:
         st.download_button(
             "📥 기획 저장 (.json)",
@@ -453,16 +482,63 @@ with st.expander("💾 작업 저장 / 불러오기"):
             mime="application/json", use_container_width=True,
         )
     with col_b:
-        restore = st.file_uploader("📂 불러오기 (.json)", type=["json"], label_visibility="collapsed")
+        restore = st.file_uploader("📂 불러오기 (.json)", type=["json"],
+                                   label_visibility="collapsed", key="restore_up")
         if restore is not None:
-            try:
-                data = json.load(restore)
-                for k in backup_payload:
-                    if k in data:
-                        st.session_state[k] = data[k]
-                st.success("✅ 복원 완료"); st.rerun()
-            except Exception as e:
-                st.error(f"복원 실패: {e}")
+            # 같은 파일을 재실행마다 다시 읽지 않도록 서명으로 1회만 적용한다. (v1.2.2)
+            # st.rerun() 이후에도 업로더는 같은 객체를 반환하는데, 그때 읽기 위치가
+            # 이미 EOF라 json.load가 빈 문자열을 만나 '복원 실패'로 오인됐다.
+            _sig = f"{restore.name}:{restore.size}"
+            if st.session_state.get("restore_sig") != _sig:
+                try:
+                    restore.seek(0)                      # 읽기 위치를 반드시 처음으로
+                    data = json.loads(restore.read().decode("utf-8"))
+                    if not isinstance(data, dict):
+                        raise ValueError("최상위가 객체(dict)가 아닙니다.")
+                    applied, missing = [], []
+                    for k in PERSIST_KEYS:
+                        if k in data:
+                            st.session_state[k] = data[k]
+                            applied.append(k)
+                        else:
+                            missing.append(k)
+                    st.session_state["restore_sig"] = _sig
+                    st.session_state["restore_report"] = {
+                        "file": restore.name, "applied": applied, "missing": missing,
+                    }
+                    st.rerun()
+                except Exception as e:
+                    st.session_state["restore_sig"] = _sig
+                    st.error(f"복원 실패: {type(e).__name__} — {e}")
+                    st.caption("파일이 이 엔진의 '기획 저장 (.json)'으로 만든 백업인지 확인하세요.")
+
+        _rep = st.session_state.get("restore_report") or {}
+        if _rep:
+            st.success(f"✅ 복원 완료 — {_rep['file']}")
+            _sm = _state_summary()
+            st.caption(" · ".join(f"{k} {v}" for k, v in _sm.items()))
+            if _rep.get("missing"):
+                st.caption("이 백업에 없던 항목(기본값 유지): " + ", ".join(_rep["missing"]))
+
+# 복원한 본문 중 절단된 것이 있으면 알린다 (v1.2.2)
+_warn = []
+if st.session_state["chapter_map"] and not check_truncation(
+        st.session_state["chapter_map"], TAIL_MARKER_CHAPTERMAP)["ok"]:
+    _warn.append("챕터맵")
+_warn += [f"분기표({k})" for k, v in st.session_state["branches"].items()
+          if not check_truncation(v, TAIL_MARKER_BRANCH)["ok"]]
+_warn += [f"트리트먼트({k})" for k, v in st.session_state["treatments"].items()
+          if not check_truncation(v, TAIL_MARKER_TREATMENT)["ok"]]
+if _warn:
+    st.warning("⚠️ 다음 항목이 끝까지 생성되지 않은 상태로 저장돼 있습니다: "
+               + ", ".join(_warn)
+               + " — 해당 STEP에서 다시 생성하신 뒤 다음 단계로 넘어가시기를 권합니다.")
+
+# 현재 로드 상태 — 어느 탭에 있든 무엇이 들어있는지 보인다 (v1.2.2)
+_sm = _state_summary()
+_cols = st.columns(len(_sm))
+for _c, (_k, _v) in zip(_cols, _sm.items()):
+    _c.metric(_k, _v)
 
 # ══════════════════════════════════════════════
 # 상단 탭 네비게이션 (STEP 0~7)

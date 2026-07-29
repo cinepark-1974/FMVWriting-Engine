@@ -1,4 +1,4 @@
-# 🎬 BLUE JEANS FMV ENGINE v1.2.1
+# 🎬 BLUE JEANS FMV ENGINE v1.2.2
 
 > BLUE JEANS PICTURES · FMV 각본 작성 엔진
 > 게임형 FMV (캐릭터 공략형 멀티 루트 로맨스)
@@ -87,7 +87,8 @@ FMV Engine은 선형 서사 엔진들과 데이터 구조가 다른(노드·분�
 | v1.1.0 | 하드 룰 1 판정 기준을 플레이 타임으로 교체. 하드 룰 12(결제 대행사 기준) 신설. FMV_PLAYABILITY_RULES(P1~P4) 신설. 결정론적 검증 도구 3종 추가. |
 | v1.2.0 | STEP 1 후보 선택 방식 전환. 훅·컨셉·캐릭터를 JSON으로 받아 라디오/멀티셀렉트로 고르면 필드에 직접 적용. 복사·붙여넣기 제거. parser.extract_json 도입. |
 | v1.2.1 | 출력 절단 사고 수정. max_tokens 재산정(한국어 토큰 밀도 반영). stop_reason 확보로 절단·거부 구분. check_truncation 신설. API 진단 패널 추가. |
+| v1.2.2 | 백업 불러오기 실패 수정(업로드 파일 재읽기 시 EOF). PERSIST_KEYS 단일화. 복원 리포트·현재 로드 상태 상시 표시. |
 
 ---
 
-© 2026 BLUE JEANS PICTURES · FMV Engine v1.2.1
+© 2026 BLUE JEANS PICTURES · FMV Engine v1.2.2
