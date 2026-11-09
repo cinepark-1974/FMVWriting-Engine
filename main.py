@@ -58,6 +58,7 @@ v1.2.2  (2026-07-28) 백업 불러오기 실패 수정. (실측 재현 완료)
 import json
 import time
 import streamlit as st
+from bj_header import render_header  # 공통 헤더 (Writer Engine 기준)
 import streamlit.components.v1 as components
 
 import prompt as P
@@ -137,13 +138,7 @@ hr { border-color: var(--card-border) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="brand-header">
-    <div class="company">BLUE JEANS PICTURES</div>
-    <div class="engine">FMV ENGINE</div>
-    <div class="tagline">YOUNG · VINTAGE · FREE · INNOVATIVE</div>
-</div>
-""", unsafe_allow_html=True)
+render_header("FMV ENGINE")
 
 
 def _get_api_key():
