@@ -138,7 +138,7 @@ hr { border-color: var(--card-border) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-render_header("FMV ENGINE")
+render_header("FMV ENGINE", tagline="INTERACTIVE FMV SCRIPT")
 
 
 def _get_api_key():
